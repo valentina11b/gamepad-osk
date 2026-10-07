@@ -3,9 +3,9 @@ package main //nolint:revive // main package needs no doc comment
 import (
 	"log"
 	"os"
-	"strconv"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -27,21 +27,21 @@ type App struct {
 	daemon        bool
 	togglePending bool
 	lock          sync.Mutex
-	themeIdx int
-	posTop   bool // true = keyboard at top of screen
-	window   *Window
-	mon      MonitorRect // raw monitor bounds
-	posArea  MonitorRect // positioning area (workarea on X11, same as mon on Wayland)
-	winH     int32
-	winX     int32 // stored for re-apply after show
-	winY     int32
-	margin   int32
+	themeIdx      int
+	posTop        bool // true = keyboard at top of screen
+	window        *Window
+	mon           MonitorRect // raw monitor bounds
+	posArea       MonitorRect // positioning area (workarea on X11, same as mon on Wayland)
+	winH          int32
+	winX          int32 // stored for re-apply after show
+	winY          int32
+	margin        int32
 
 	// Key repeat state
-	repeatAction   ActionType // action to repeat (ActionNone = inactive)
-	repeatStart    time.Time  // when key was first pressed
-	repeatLast     time.Time  // when last repeat fired
-	repeatInitial  bool       // true = still in initial delay phase
+	repeatAction  ActionType // action to repeat (ActionNone = inactive)
+	repeatStart   time.Time  // when key was first pressed
+	repeatLast    time.Time  // when last repeat fired
+	repeatInitial bool       // true = still in initial delay phase
 
 	reconnectLast time.Time // cooldown for gamepad reconnection attempts
 
@@ -52,6 +52,7 @@ type App struct {
 	// fallback so a user who never releases the combo still gets a grab.
 	grabPending      bool
 	grabPendingUntil time.Time
+	ungrabPending    bool
 }
 
 func NewApp(config Config) *App {
@@ -364,7 +365,13 @@ func (app *App) Run() error {
 				}
 				// Cancel any pending grab so it can't fire after hide.
 				app.grabPending = false
-				gamepad.Ungrab()
+
+				// Keep grab until all OSK buttons are released.
+				if cfg.Gamepad.Grab {
+					app.ungrabPending = true
+				} else {
+					gamepad.Ungrab()
+				}
 				if isWayland {
 					destroyLayerSurface()
 				} else {
@@ -405,6 +412,14 @@ func (app *App) Run() error {
 			if !gamepad.AnyButtonHeld() || time.Now().After(app.grabPendingUntil) {
 				app.grabPending = false
 				gamepad.Grab()
+			}
+		}
+
+		// Deferred ungrab: wait until all physical buttons are released.
+		if app.ungrabPending {
+			if !gamepad.AnyButtonHeld() {
+				app.ungrabPending = false
+				gamepad.Ungrab()
 			}
 		}
 
@@ -499,6 +514,11 @@ func (app *App) handleAction(a Action, kb *KeyboardState, inj *Injector, rend *R
 		app.lock.Lock()
 		app.togglePending = true
 		app.lock.Unlock()
+		return
+	}
+
+	// Ignore the buttons used to open the OSK until they are released.
+	if app.grabPending {
 		return
 	}
 
